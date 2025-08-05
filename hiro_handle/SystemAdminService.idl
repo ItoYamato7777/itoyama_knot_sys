@@ -1,0 +1,13 @@
+// -*- mode: idl; indent-tabs-mode: t; tab-width: 4; c-basic-offset: 4; -*-
+
+
+module OpenHRP {
+  interface SystemAdminService
+  {
+    string getVersion(in string opt);
+    unsigned long backupSystem(in string opt);
+    unsigned long upgrade(in string opt);
+    oneway void reboot(in string opt);
+    oneway void shutdown(in string opt);
+  };
+};

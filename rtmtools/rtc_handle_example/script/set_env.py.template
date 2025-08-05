@@ -1,0 +1,6 @@
+RtmToolsDir="../.."
+MyRtcDir=".."
+NS0="localhost:9876"
+NS1="localhost:2809"
+# NS0="172.16.140.141:9876"
+# NS1="192.168.3.226:9876"

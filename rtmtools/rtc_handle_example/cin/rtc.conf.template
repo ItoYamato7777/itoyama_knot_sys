@@ -1,0 +1,4 @@
+exec_cxt.periodic.rate:10.0
+corba.nameservers: localhost:9876
+naming.formats: %n.rtc
+# logger.log_level: TRACE

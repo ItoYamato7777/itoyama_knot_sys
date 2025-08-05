@@ -1,0 +1,26 @@
+module OpenHRP
+{
+  interface DataLoggerService
+  {
+    /**
+     * @brief add a data input port 
+     * @param type This parameter is not used yet. Data type is fixed to TimedDoubleSeq
+     * @param name name of the port
+     * @return true if the port is added successfully, false otherwise
+     */
+    boolean add(in string type, in string name);
+
+    /**
+     * @brief save data 
+     * @param basename basename of log files. Names of input data ports are used as file extensions
+     * @return true if log files are saved successfully, false otherwise
+     */
+    boolean save(in string basename); 
+
+    /**
+     * @brief clear data
+     * @return true cleared successfully, false otherwise
+     */
+    boolean clear();
+  };
+};

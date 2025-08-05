@@ -1,0 +1,19 @@
+module myHRP
+{
+  typedef sequence < sequence < double > > KeyPose;
+  typedef sequence < sequence < sequence < double > > > log_data;
+  typedef sequence < double > params;
+  
+  interface MyHiroControlService
+  {
+    void set_joint_angles(in KeyPose pose, in double speed, out double ttm);
+    void move_arm_linearly(in params posR, in params posL, in params wrist2handR, in params wrist2handL, in params CY, in double speed, out double ttm);
+    void waitPositionControl(out boolean ret);
+    void waitForceControl(in params threshold, out short trigger);
+    void start_log(out double start_time);
+    void return_log(out log_data data);
+    void init_force_control(in params R, in params L);
+    void start_force_control(in params rot_R, in params coefficient_R, in params target_R, in params rot_L, in params coefficient_L, in params target_L);
+    void stop_force_control(in boolean R, in boolean L);
+  };
+};

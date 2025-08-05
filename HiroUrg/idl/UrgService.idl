@@ -1,0 +1,9 @@
+module svcUrg{
+  typedef sequence < sequence < double > > log_data;
+
+  interface UrgService{
+    void start_log(out double start_time);
+    void return_log(out log_data data);
+    void init_timestamp(out boolean finished);
+  };
+};

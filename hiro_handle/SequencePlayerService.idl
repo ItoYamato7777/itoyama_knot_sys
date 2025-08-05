@@ -1,0 +1,50 @@
+module OpenHRP
+{
+  typedef sequence< sequence<double> > KeyPose;
+  
+  interface SequencePlayerService
+  {
+    
+    /**
+     * @brief Wait until the last goal posture is sent to the robot
+     * @param partMask set the bit of part id
+     * @param waitFlag whether to wait for interpolation to end
+     */
+    boolean isEmpty(in octet partMask, in boolean waitFlag);
+    
+    /**
+     * @brief Interpolate all joint angles on robot using duration specified by "tm". Returns without waiting for whole sequence to be sent to robot.
+     * @param jvs sequence of joint angles
+     * @param tm requested duration
+     * @param ttm actual duration
+     * @return current status
+     */
+    unsigned long setJointAngles(in KeyPose pose, in double tm, out double ttm);
+    
+    /**
+     * @brief Interpolate just one joint angle specified by "jname" using duration "tm". Function returns without waiting for interpolation to finish
+     * @param partName name of part to control
+     * @param jname joint name
+     * @param jv joint angle
+     * @param tm requested duration
+     * @param ttm actual duration
+     * @return current status
+     */
+    unsigned long setJointAngle(in string jname, in double jv, in double tm, out double ttm);
+
+    /**
+     * @brief load joint trajectory files and start to playback.
+     * @param basename basename of the joint trajectory files. \<basename\>.\<partName\> is used, multiple part names are loaded at the same time.
+     * @param tm Requested duration to go to the initial posture in \<basename\>.pos
+     * @param ttm Actual duration to go the initial posture in \<basename\>.pos
+     * @return current status
+     */
+    unsigned long loadTrajectory(in string basename, in double tm, out double ttm);
+
+    /**
+     * @brief clear pattern data in playback queue. This function returns after the queue becomes empty.
+     * @param partMask set the bit of part id
+     */
+    unsigned long clearBuffer(in octet partMask);
+  };
+};

@@ -1,0 +1,1 @@
+omniidl.exe -bpython com_replace.idl 

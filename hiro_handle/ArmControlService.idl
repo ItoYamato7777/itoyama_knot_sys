@@ -1,0 +1,24 @@
+// -*- mode: idl; indent-tabs-mode: t; tab-width: 4; c-basic-offset: 4; -*-
+module OpenHRP
+{
+    struct SplineNode
+    {
+        sequence<double, 6> node;
+        double time;
+    };
+    typedef sequence< SplineNode > SplineNodeSeq;
+
+    enum ArmState
+    {
+        IDLE, ArmBusyState
+    };
+
+    interface ArmControlService
+    {
+        ArmState checkStatus();
+        double setTargetAngular(in double x, in double y, in double z, in double r, in double p, in double w, in double rate);
+        boolean getCurrentConfiguration(out double x, out double y, out double z, out double r, out double p, out double w);
+
+        unsigned long setTargetsSpline(in SplineNodeSeq nodeseq);
+    };
+};

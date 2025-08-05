@@ -1,0 +1,7 @@
+module OpenHRP
+{
+  interface TimeKeeperService
+  {
+    void sleep(in double tm);
+  };
+};

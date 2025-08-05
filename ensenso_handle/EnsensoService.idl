@@ -1,0 +1,15 @@
+module svcEnsenso{
+  struct RpmParameters{
+    float pixelsize;
+    long size0;
+    long size1;
+  };
+  
+  interface EnsensoService{
+    RpmParameters getRpmParameters();
+    long setRpmParameters(in RpmParameters rpmp);
+    long projectorConf(in long mode);
+    long switchMonitor(in boolean mode);
+    long setTargetBrightness(in long param);
+  };
+};
