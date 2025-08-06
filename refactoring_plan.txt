@@ -1,0 +1,441 @@
+## 第1章：はじめに
+
+### 1.1. プロジェクトの目的とゴール
+
+本プロジェクトの目的は、既存のHIROロボット制御システムリポジトリ`itoyama_knot_sys`を、現代的なソフトウェア工学の原則に基づき、**保守性・再利用性・拡張性**に優れたPythonパッケージへと全面的にリファクタリングすることです。
+
+このリファクタリングを通じて、以下のゴールを達成します。
+
+1. **パッケージ化による環境構築の簡素化**:
+`pip`コマンド一つでインストール可能なパッケージにすることで、誰でも簡単かつ確実に開発・実行環境を構築できるようにします。
+2. **コードの品質向上**:
+重複したコードを統合し、責務が不明瞭なモジュールを整理することで、コードの可読性を高め、潜在的なバグを減少させます。
+3. **機能の再利用性の向上**:
+ロボット制御、センサーアクセス、画像処理といった各機能を独立したクラスとしてカプセル化し、他の研究やアプリケーションから容易に再利用できるAPIを提供します。
+4. **将来の拡張性の確保**:
+新しいセンサーやアクチュエータ、アルゴリズムを追加する際に、既存のコードへの影響を最小限に抑えることができる、疎結合で拡張しやすいアーキテクチャを構築します。
+
+本リファクタリングは、元のリポジトリが持つ**全ての機能（HIROロボット、TakiHand、Ensenso、Leptrino、URGの制御）を完全に引き継ぐ**ことを保証します。
+
+### 1.2. この計画書の位置づけ
+
+この文書は、上記ゴールを達成するための**全体設計と実装手順を定義する公式な計画書**です。リファクタリング作業の羅針盤として、以下の役割を果たします。
+
+- **全体像の共有**: プロジェクトの最終的な構造と設計思想を明確にし、関係者全員が共通の理解を持つことを助けます。
+- **作業の道標**: 実装を段階的なフェーズと具体的なステップに分解し、体系的で抜け漏れのない開発プロセスを提示します。
+- **設計の記録**: 各モジュールやクラスが持つべき責務とインターフェースを定義し、将来のメンテナンスや機能追加の際の参照資料となります。
+
+### 1.3. リファクタリング後の利用イメージ（サンプルコード）
+
+リファクタリングが完了した暁には、ユーザーは以下のようなシンプルかつ直感的なコードで、ロボットシステムの全機能を活用できるようになります。
+
+```
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+from itoyama_knot_sys import HiroController, HandController, VisionSystem, Transform
+
+def main():
+    # --- 1. 初期化 ---
+    # 各コントローラをインスタンス化
+    hiro = HiroController(nameserver_ip='hiro022')
+    right_hand = HandController(hand_type='right', serial_port='/dev/ttyUSB0')
+    vision = VisionSystem(rtm_manager=hiro.rtm) # RTM環境を共有
+
+    try:
+        # --- 2. 接続と準備 ---
+        hiro.connect()
+        right_hand.connect()
+        vision.connect()
+
+        hiro.servo_on()
+        right_hand.activate()
+        hiro.go_initial_pose()
+        print("Robot is ready.")
+
+        # --- 3. タスクの実行 ---
+        # 右腕を少し前に動かす
+        current_pose_r = hiro.get_arm_pose('right')
+        target_pose_r = current_pose_r * Transform(xyz=[0.1, 0, 0])
+        hiro.move_arm_r(target_pose_r, duration=3.0)
+
+        # ハンドを開く
+        right_hand.move(angles=[0, -900, -900], duration=100, servo_indices=[0, 1, 2])
+
+        # カラー画像を取得して表示
+        color_image, _ = vision.capture('color')
+        # cv2.imshow("Ensenso Color Image", color_image)
+        # cv2.waitKey(0)
+
+        # --- 4. 終了処理 ---
+        hiro.go_initial_pose()
+        right_hand.deactivate()
+        hiro.servo_off()
+
+    except Exception as e:
+        print("An error occurred: %s" % e)
+    finally:
+        # --- 5. 切断 ---
+        right_hand.disconnect()
+        print("System shutdown.")
+
+if __name__ == '__main__':
+    main()
+
+```
+
+このサンプルコードが示すように、元の`knot_sys.py`のようにimport時に全ての処理が実行されるのではなく、ユーザーが必要な機能を能動的に呼び出す、クリーンで再利用性の高い構造を目指します。
+
+## 第2章：全体設計
+
+本章では、リファクタリング後の`itoyama_knot_sys`パッケージの最終的な構造と、その設計思想について詳述する。この設計は、プロジェクトの持続的な成長とメンテナンス性の向上を目的としている。
+
+### 2.1. 最終的なパッケージ構成図
+
+以下に、本リファクタリングで目指す最終的なディレクトリ構成を示す。各ディレクトリは明確な責務を持ち、機能的に整理されている。
+
+```
+itoyama_knot_sys/
+├── itoyama_knot_sys/
+│   ├── __init__.py               # パッケージの入り口。主要クラスをここからインポートできるようにする
+│   ├── bodyinfo.py               # ロボット固有の定数（初期姿勢など）を定義
+│   │
+│   ├── robot/                    # 🤖 ロボット制御関連 (物理的な動きを司る高レベルAPI)
+│   │   ├── __init__.py
+│   │   ├── hiro_controller.py    # HIRO本体の統合制御クラス
+│   │   ├── hand_controller.py    # TakiHandの統合制御クラス
+│   │   ├── kinematics_hiro.py    # HIRO本体の運動学計算
+│   │   └── kinematics_hand.py    # ハンドの運動学・軌道生成
+│   │
+│   ├── sensors/                  # 📡 センサー関連 (ハードウェアとの直接通信を行う低レベルドライバ)
+│   │   ├── __init__.py
+│   │   ├── camera_ensenso.py     # Ensensoカメラの制御とデータ取得
+│   │   ├── force_leptrino.py     # Leptrinoのシリアル通信
+│   │   ├── lidar_urg.py          # URGのシリアル通信
+│   │   └── servo_futaba.py       # Futabaサーボのシリアル通信
+│   │
+│   ├── processing/               # 📊 データ処理関連 (センサーデータを解釈・加工するアルゴリズム)
+│   │   ├── __init__.py
+│   │   ├── vision.py             # 画像処理アルゴリズム
+│   │   └── pointcloud.py         # 点群処理アルゴリズム
+│   │
+│   ├── rtc/                      # 🔩 OpenRTM-aistコンポーネント実装 (RTM環境に特化した部分)
+│   │   ├── __init__.py
+│   │   ├── joint_control/        # JointControl RTCの実装
+│   │   ├── leptrino/             # Leptrino RTCの共通実装
+│   │   └── urg/                  # URG RTCの共通実装
+│   │
+│   ├── utils/                    # 🛠️ 共通ユーティリティ (プロジェクト非依存の汎用ツール)
+│   │   ├── __init__.py
+│   │   ├── file_io.py
+│   │   ├── geometry.py
+│   │   ├── parallel.py
+│   │   └── rtm.py                # RTM環境のセットアップ・管理ヘルパー
+│   │
+│   └── params/                   # 🔢 パラメータファイル (.npyなど)
+│       ├── __init__.py
+│       └── ...
+│
+├── setup.py                      # パッケージのインストール定義ファイル
+├── README.md
+└── tests/                        # (将来の拡張用) テストコード
+    └── ...
+
+```
+
+### 2.2. 設計思想
+
+この構成は、以下の3つの設計思想に基づいている。
+
+### 1. 責務の分離 (Separation of Concerns)
+
+元のリポジトリでは、一つのファイルにハードウェア制御、データ処理、RTM通信のロジックが混在していた。これを以下の通り、責務ごとに明確に分離する。
+
+- **ハードウェア制御 (`robot/`, `sensors/`)**: 物理的なデバイスとの通信や直接的な制御を行うコード。`sensors/`はセンサーから生データを取得する低レベルな役割、`robot/`はそれらを利用してロボットを意味のある動作にまとめる高レベルな役割を担う。
+- **データ処理 (`processing/`)**: センサーから得られた生データ（画像、点群）を解釈し、意味のある情報（物体の位置、形状など）に変換するアルゴリズムを配置する。
+- **RTM実装 (`rtc/`)**: OpenRTM-aistのフレームワークに特化したコンポーネントの実装をこのディレクトリに隔離する。これにより、将来的にRTM以外のミドルウェア（例: ROS）への対応を検討する際にも、他のビジネスロジックへの影響を最小限に抑えることができる。
+- **ユーティリティ (`utils/`)**: 上記のいずれにも属さない、プロジェクト横断的に利用される汎用的な機能（ファイルI/O、幾何学計算など）を配置する。
+
+### 2. クラスベース設計 (Class-Based Design)
+
+元のスクリプトベースの実装から、状態（プロパティ）と振る舞い（メソッド）をカプセル化したクラスベースの設計に移行する。
+
+- **例**: `HiroController`クラスは、ロボットの接続状態や現在の関節角度といった「状態」を保持し、「アームを動かす」「サーボをONにする」といった「振る舞い」をメソッドとして提供する。
+- これにより、グローバル変数が排除され、各オブジェクトの状態が独立して管理されるため、コードの予測可能性と安全性が向上する。
+
+### 3. 依存関係の明確化 (Clarification of Dependencies)
+
+モジュール間の依存関係を一方向に整理し、見通しの良い構造にする。
+
+- **低レベル → 高レベル**: 依存関係は基本的に`utils`や`sensors`といった低レベルなモジュールから、`robot`や`processing`といった高レベルなモジュールへと向かう。例えば、`HiroController`は`kinematics_hiro`や`rtm`を利用するが、その逆はない。
+- **インターフェースの統一**: `HandController`や`VisionSystem`といった高レベルAPIは、内部でRTMやシリアル通信といった複雑な詳細を隠蔽する。利用者は、これらのクラスの公開メソッドを呼び出すだけで、ロボットシステムを操作できるようになる。
+
+この設計により、システム全体が部品の組み合わせとして理解しやすくなり、特定の部品（例: `sensors/camera_ensenso.py`）を別のカメラ用のモジュールに差し替えるといった変更が容易になる。
+
+## 第3章：実装フェーズと手順
+
+本章では、リファクタリングプロジェクトを完遂するための具体的な作業手順を、5つのフェーズに分けて定義する。各フェーズは明確なゴールを持ち、依存関係を考慮して順序付けられている。この計画に従うことで、段階的かつ確実な実装を推進する。
+
+### **フェーズ1：基盤整備 (Foundation Setup)**
+
+**ゴール**: プロジェクトの骨格となるパッケージ構造を構築し、他のモジュールの基盤となる汎用的なユーティリティを実装する。このフェーズが完了すると、プロジェクトは`pip`によってインストール可能な状態になる。
+
+- **Step 1.1: ディレクトリと`__init__.py`の作成**
+    - 第2章で設計したディレクトリ構造に基づき、すべてのフォルダと空の`__init__.py`ファイルを作成する。これにより、Pythonが各ディレクトリをパッケージおよびサブパッケージとして認識できるようになる。
+- **Step 1.2: `setup.py`の作成と編集可能モードでのインストール**
+    - プロジェクトのルートに`setup.py`を記述する。
+    - `pip install -e .`コマンドを実行し、パッケージが「編集可能モード」で正しくインストールされることを確認する。これにより、開発中のコード変更が即座にパッケージに反映されるようになる。
+- **Step 1.3: 汎用ユーティリティの実装 (`utils`ディレクトリ）**
+    - **`utils/geometry.py`**: 元の`geo.py`を、`Transform`クラスを中核とするNumpyベースのモジュールとして実装する。
+    - **`utils/file_io.py`**: 元の`file_io.py`をリファクタリングし、CSV, JSON, テキストファイルの読み書き機能を提供する。
+    - **`utils/parallel.py`**: 元の`parallel_processing.py`を移植する。
+    - **`utils/rtm.py`**: 元の`rtmtools`の核心機能（`RtmEnv`, `RtcHandle`など）を、RTM環境のセットアップと管理を行うヘルパークラスとして実装する。
+
+### **フェーズ2：低レベルAPIの実装 (Low-Level API Implementation)**
+
+**ゴール**: 各ハードウェアデバイスとの直接的な通信を担う、低レベルなドライバクラスを実装する。これらのクラスは、シリアル通信や特定のRTCとの基本的なやり取りをカプセル化する。
+
+- **Step 2.1: センサー・アクチュエータドライバの実装 (`sensors`ディレクトリ）**
+    - **`sensors/servo_futaba.py`**: 元の`pyFutabaServo/robot_servo.py`を、Futabaサーボモーターへのシリアルコマンド送信を責務とする`FutabaServo`クラスとして実装する。
+    - **`sensors/force_leptrino.py`**: 元の`pyLeptrino/pyLeptrino.py`を、Leptrinoセンサーとのシリアル通信を責務とする`Leptrino`クラスとして実装する。
+    - **`sensors/lidar_urg.py`**: 元の`pyURG/pyURG.py`を、URGセンサーとのシリアル通信を責務とする`Urg`クラスとして実装する。
+    - **`sensors/camera_ensenso.py`**: EnsensoカメラのRTCと通信し、画像や点群などの生データを取得する責務を持つ`EnsensoCamera`クラスを実装する。内部で`utils.rtm`を利用してRTCとの接続を管理する。
+
+### **フェーズ3：データ処理と運動学の実装 (Processing & Kinematics)**
+
+**ゴール**: センサーから得られた生データを意味のある情報に変換するアルゴリズムと、ロボットの動きを計算する運動学モジュールを実装する。これらのモジュールは、物理的なハードウェアから独立している。
+
+- **Step 3.1: 運動学計算モジュールの実装 (`robot`ディレクトリ内）**
+    - **`robot/kinematics_hiro.py`**: 元の`kinematics_hiro.py`を、`HiroKinematics`クラスとして実装する。FK/IK計算メソッドを提供する。
+    - **`robot/kinematics_hand.py`**: 元の`taki_hand/kinematics_hand.py`と`finger_motion.py`を統合し、`TakiHandKinematics`クラスとして実装する。指の軌道生成や把持パラメータ計算メソッドを提供する。
+- **Step 3.2: 画像・点群処理モジュールの実装 (`processing`ディレクトリ）**
+    - **`processing/vision.py`**: 元の`robot_vision/vision.py`の関数群を、画像処理アルゴリズムを提供する`VisionProcessor`クラスまたは関数群として実装する。
+    - **`processing/pointcloud.py`**: 元の`pointcloud/pointcloud.py`の関数群を、点群処理アルゴリズムを提供する`PointCloudProcessor`クラスまたは関数群として実装する。
+
+### **フェーズ4：高レベルAPIの実装 (High-Level API Implementation)**
+
+**ゴール**: これまでのフェーズで実装したモジュールを組み合わせ、ユーザーが直接操作するための直感的で高レベルなAPI（コントローラクラス）を完成させる。
+
+- **Step 4.1: `HandController`の実装 (`robot/hand_controller.py`)**
+    - `HandController`クラスを実装する。このクラスは内部で`sensors.servo_futaba`を利用してサーボを制御し、`robot.kinematics_hand`を利用して複雑な指の動きを生成する。`open()`, `close()`, `load_motion()`といった高レベルメソッドを提供する。
+- **Step 4.2: `HiroController`の実装 (`robot/hiro_controller.py`)**
+    - `HiroController`クラスを実装する。このクラスは`utils.rtm`を利用してRTM環境全体を管理し、`robot.kinematics_hiro`を利用してアームのIK計算を行う。`connect()`, `servo_on()`, `move_arm_r()`といった高レベルメソッドを提供する。
+
+### **フェーズ5：OpenRTMコンポーネントの実装と統合**
+
+**ゴール**: 新しいパッケージ構造に合わせて既存のRTCをリファクタリングし、システム全体を統合して動作させる。
+
+- **Step 5.1: RTC実装の共通化と実装 (`rtc`ディレクトリ）**
+    - **`rtc/leptrino/component.py`**: `lepL`と`lepR`のロジックを統合し、単一の`LeptrinoRtc`クラスとして実装する。左右の違いは`.conf`ファイルから読み込むプロパティで吸収する。
+    - **`rtc/urg/component.py`**: `urgL`と`urgR`のロジックを統合し、単一の`UrgRtc`クラスとして実装する。
+    - **`rtc/joint_control/component.py`**: 元の`JointControl.py`を移植する。力覚制御などの複雑なロジックは、可能であれば`HiroController`側に移譲し、RTCはRTMのデータフローに集中するよう責務を再設計する。
+- **Step 5.2: 全体統合と最終APIの整備 (`itoyama_knot_sys/__init__.py`)**
+    - トップレベルの`__init__.py`を編集し、ユーザーが`from itoyama_knot_sys import HiroController`のように主要なクラスを直接インポートできるようにする。
+    - 第1章で示した利用イメージのサンプルコードが実際に動作することを確認し、最終的な調整を行う。
+
+## 第4章：各モジュールの詳細設計
+
+本章では、パッケージを構成する各モジュールについて、その詳細な設計を定義する。これは実装段階における具体的な仕様書として機能する。
+
+### 4.1. `utils`：共通ユーティリティ群
+
+プロジェクト全体から利用される、特定のハードウェアやアプリケーションロジックに依存しない汎用的な機能を提供する。
+
+- **`utils/geometry.py`**
+    - **元のファイル**: `geopy/geo.py`
+    - **責務**: 3次元空間における姿勢と位置の計算を行う。
+    - **主要クラス**:
+        - `Transform`: 4x4の同次変換行列を表現する。
+            - `__init__(mat, xyz, rpy, xyzabc)`: 多様な形式からインスタンスを生成。
+            - `inverse()`: 逆行列を返す。
+            - `to_xyzrpy()` / `to_xyzabc()`: XYZ + RPY/ABCオイラー角のリストを返す。
+            - `__mul__(other)`: 変換の合成（`Transform`）やベクトルの座標変換を  演算子で実現。
+- **`utils/file_io.py`**
+    - **元のファイル**: `file_io/file_io.py`
+    - **責務**: CSV, JSON, テキストファイル、Numpy配列の読み書きを統一的なインターフェースで提供する。
+    - **主要な関数/クラス**:
+        - `read_csv(path, dtype)`: CSVファイルを読み込む。
+        - `Writer`クラス: タイムスタンプ付きのファイル書き込みやバックアップ作成機能を持つ。
+- **`utils/parallel.py`**
+    - **元のファイル**: `parallel_processing/parallel_processing.py`
+    - **責務**: Pythonの`multiprocessing`を利用したタスクの並列実行を簡略化する。
+    - **主要な関数**:
+        - `parallel_processing(func_list, args_list)`: 関数のリストを並列実行し、結果のリストを返す。
+- **`utils/rtm.py`**
+    - **元のファイル**: `rtmtools/` ディレクトリ群
+    - **責務**: OpenRTM-aist環境のセットアップ、ネームサーバーへの接続、RTCの操作といった複雑な処理をカプセル化する。
+    - **主要なクラス**:
+        - `RtmManager`: RTM環境全体を管理する。
+            - `connect()`: ネームサーバーに接続し、オンラインのRTCを探索する。
+            - `create_component(module, name)`: 新しいRTCを生成する。
+            - `connect_ports(port1, port2)`: RTC間のポートを接続する。
+            - `activate_component(name)` / `deactivate_component(name)`: RTCをアクティブ/非アクティブ化する。
+
+### 4.2. `sensors`：低レベルドライバ群
+
+各ハードウェアデバイスとの直接通信（シリアル通信やRTMデータポートの読み書き）を担う。
+
+- **`sensors/servo_futaba.py`**
+    - **元のファイル**: `pyFutabaServo/robot_servo.py`
+    - **責務**: Futabaサーボモーターへのシリアルコマンド送信。
+    - **主要なクラス**:
+        - `_FutabaServo`: 個別のサーボを制御する内部クラス。
+        - `FutabaServoController`: シリアルポートを管理し、複数のサーボを統括する。
+            - `connect(port, baudrate)`: シリアルポートを開く。
+            - `move(servo_id, angle, duration)`: 特定のサーボを動かす。
+            - `torque(servo_id, mode)`: トルクをON/OFFする。
+- **`sensors/force_leptrino.py`**
+    - **元のファイル**: `pyLeptrino/pyLeptrino.py`
+    - **責務**: Leptrino力覚センサーとのシリアル通信。
+    - **主要なクラス**:
+        - `Leptrino`: センサーとの接続を管理し、データを取得する。
+            - `connect(port)`: シリアルポートを開く。
+            - `read()`: 6軸力覚データを返す。
+- **`sensors/lidar_urg.py`**
+    - **元のファイル**: `pyURG/pyURG.py`
+    - **責務**: URGレーザー距離計とのシリアル通信。
+    - **主要なクラス**:
+        - `Urg`: センサーとの接続を管理し、スキャンデータを取得する。
+            - `connect(port)`: シリアルポートを開く。
+            - `capture_scan()`: 1回分のスキャンデータを返す。
+- **`sensors/camera_ensenso.py`**
+    - **元のファイル**: `ensenso_handle/ensenso_handle.py`
+    - **責務**: EnsensoカメラRTCとの通信と、生データ（画像、点群）の取得。
+    - **主要なクラス**:
+        - `EnsensoCamera`: カメラRTCのハンドルを保持し、データ取得APIを提供する。
+            - `__init__(rtm_manager)`: `RtmManager`のインスタンスを受け取る。
+            - `connect()`: Ensenso RTCに接続し、データポートを準備する。
+            - `capture(port_name)`: `'color'`, `'pointMap'`などを指定してデータを取得する。
+
+### 4.3. `robot`：ロボット制御と運動学
+
+低レベルドライバと運動学計算を組み合わせ、ロボットやハンドを意味のある単位で操作するための高レベルAPIを提供する。
+
+- **`robot/kinematics_hiro.py` / `robot/kinematics_hand.py`**
+    - **元のファイル**: `kinematics_hiro.py`, `kinematics_hand.py`, `finger_motion.py`
+    - **責務**: それぞれHIRO本体とTakiHandの運動学・逆運動学、軌道生成計算を専門に行う。状態を持たない計算ライブラリとして実装する。
+- **`robot/hand_controller.py`**
+    - **元のファイル**: `taki_hand/hand_sys.py`
+    - **責務**: 左右のTakiHandを統一的なインターフェースで制御する。
+    - **主要なクラス**:
+        - `HandController`:
+            - `__init__(hand_type, serial_port)`: `'right'`または`'left'`を指定して初期化。内部で`sensors.servo_futaba.FutabaServoController`をインスタンス化する。
+            - `activate()` / `deactivate()`: ハンドを起動・停止する。
+            - `load_motion(motion_name)`: 保存された動作パターンを再生する。
+- **`robot/hiro_controller.py`**
+    - **元のファイル**: `hiro_handle.py`, `knot_sys.py`の大部分
+    - **責務**: HIROロボット全体の状態を管理し、統合的な操作APIを提供する。
+    - **主要なクラス**:
+        - `HiroController`:
+            - `__init__(...)`: 内部で`utils.rtm.RtmManager`をインスタンス化する。
+            - `connect()`: RTM環境をセットアップし、必要なRTC群を起動・接続する。
+            - `servo_on()` / `servo_off()`: ロボット全体のサーボを制御する。
+            - `move_arm_r(target_pose)`: 右腕のIKを計算し、目標姿勢へ動かす。内部で`robot.kinematics_hiro`とRTMサービスを呼び出す。
+
+### 4.4. `processing`：データ処理
+
+センサーデータを入力とし、特定のタスク（例：物体の認識）に役立つ情報を出力するアルゴリズムを実装する。
+
+- **`processing/vision.py`**
+    - **元のファイル**: `robot_vision/vision.py`
+    - **責務**: OpenCVを用いた画像処理アルゴリズムを提供する。
+    - **主要な関数**: `thresholding`, `thinning`, `find_loop`など。
+- **`processing/pointcloud.py`**
+    - **元のファイル**: `pointcloud/pointcloud.py`
+    - **責務**: Open3Dを用いた点群処理アルゴリズムを提供する。
+    - **主要な関数**: `downsample`, `segment_plane`, `clustering`など。
+
+### 4.5. `rtc`：OpenRTMコンポーネント
+
+OpenRTMのフレームワーク上で動作するコンポーネントの実装。
+
+- **`rtc/leptrino/component.py`, `rtc/urg/component.py`**
+    - **元のファイル**: `lepL.py`, `lepR.py`, `urgL.py`, `urgR.py`
+    - **責務**: 左右で共通化されたRTCロジックを実装する。
+    - **設計**: `onInitialize`で`.conf`ファイルから`port_name`や`device_path`といったプロパティを読み込み、左右の違いを吸収する。`onExecute`では、対応する`sensors`モジュールのクラス（例: `sensors.force_leptrino.Leptrino`）を呼び出してデータを取得し、データポートから出力する。
+- **`rtc/joint_control/component.py`**
+    - **元のファイル**: `hiroControlRTC/HiroJointControl/JointControl.py`
+    - **責務**: RTMのデータフロー上で、力覚情報を含む複数のデータを同期させ、ロボットへの最終的な指令値を生成する。複雑な状態管理やIK計算は`HiroController`側に移譲し、このRTCはデータの中継と同期に集中する。
+
+### 4.6. `params`：パラメータ管理
+
+- **責務**: カメラキャリブレーションデータや力覚センサーのオフセット値など、学習・調整によって得られるパラメータを`.npy`形式で保持する。
+- **アクセス方法**: 各クラスは`pkg_resources.resource_filename('itoyama_knot_sys', 'params/your_param.npy')`を用いて、インストールされたパッケージ内のパラメータファイルへ安全にアクセスする。
+
+### 4.7. `itoyama_knot_sys`：トップレベルパッケージ
+
+- **`__init__.py`**: ユーザーが最も頻繁に利用するであろう高レベルなクラス（`HiroController`, `HandController`, `VisionSystem`など）をインポートし、パッケージの直下からアクセスできるようにする。
+- **`bodyinfo.py`**: HIROロボット固有の静的な設定値（初期姿勢の関節角度など）を定義する。
+
+## 第5章：依存関係と環境構築
+
+本章では、`itoyama_knot_sys`パッケージを開発・実行するために必要な環境と、その構築手順について詳述する。この手順に従うことで、全開発者が一貫した環境で作業を行うことができる。
+
+### 5.1. Python環境
+
+- **Pythonバージョン**: **Python 2.7**
+    - 本プロジェクトは、元のリポジトリの依存関係を考慮し、Python 2.7を公式な実行環境とする。
+    - ライブラリのインストールは、システムのPython環境に対して直接行うものとする。
+
+### 5.2. 必須ライブラリ
+
+本パッケージは、以下の外部Pythonライブラリに依存する。
+
+- `numpy`: 数値計算
+- `scipy`: 科学技術計算
+- `opencv-python`: 画像処理（バージョン2.4系を推奨）
+- `pyserial`: シリアル通信
+- `open3d-python`: 点群処理（Python 2.7で利用可能な旧バージョン）
+- `scikit-learn`: 機械学習（クラスタリングなどで利用）
+
+これらのライブラリは、プロジェクトのルートに配置する`requirements.txt`ファイルを通じて、`pip`で一括インストールできるようにする。
+
+- **`requirements.txt`の例**:
+    
+    ```
+    numpy==1.16.6
+    scipy==1.2.3
+    pyserial==3.4
+    # OpenCV, Open3Dは環境に応じて手動でのインストールが必要になる場合があるため注意
+    
+    ```
+    
+- **インストールコマンド**:
+    
+    ```
+    pip install -r requirements.txt
+    
+    ```
+    
+
+### 5.3. OpenRTM-aist環境
+
+OpenRTM-aistは`pip`ではインストールできないため、システムに別途セットアップする必要がある。
+
+- **1. OpenRTM-aist本体のインストール**:
+    - 元の`README.md`に記載されている通り、公式のインストールスクリプト（`pkg_install_ubuntu.sh`など）を使用して、**C++版**および**Python版**の両方をインストールする。
+- **2. 環境変数の設定**:
+    - OpenRTM-aistのライブラリやコマンドにパスを通すため、以下の環境変数を`.bashrc`などに設定する必要がある。
+        
+        ```
+        export RTM_ROOT=/usr/lib/openrtm-aist/
+        export PYTHONPATH=$PYTHONPATH:$RTM_ROOT/components/python
+        # その他、rtm-configコマンドなどで確認できるパス
+        
+        ```
+        
+- **3. ネームサーバーの起動**:
+    - RTC（Robot Technology Component）同士が通信するためには、ネームサーバーが常に稼働している必要がある。
+    - **起動コマンド**:
+        
+        ```
+        # ターミナルを分けて実行し、常に起動させておく
+        rtm-naming
+        
+        ```
+        
+    - 本プロジェクトでは、ロボット側（`hiro022`）と開発PC側（`localhost`）で、それぞれネームサーバーが起動していることを前提とする。
+- **4. IDLコンパイラ**:
+    - RTC間のインターフェースを定義するIDL（Interface Definition Language）ファイルをPythonコードに変換するため、`omniidl`コマンドが必要。これはOpenRTM-aistのインストールに含まれる。
+    - 新しいパッケージ構成では、各RTCディレクトリ（例: `rtc/joint_control/`）に`.idl`ファイルを配置し、開発の初期段階でコンパイルを行う。
+
+以上の環境構築手順を完了することで、`itoyama_knot_sys`パッケージの開発と実行に必要なすべての依存関係が満たされる。
